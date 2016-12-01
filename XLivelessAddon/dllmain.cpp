@@ -58,6 +58,9 @@ DWORD WINAPI Init(LPVOID)
 
 	CIniReader iniReader("");
 	szCustomSavePath = iniReader.ReadString("MAIN", "CustomSavePath", "");
+	bool bRemoveRegistryPathDependencyEFLC = iniReader.ReadInteger("MAIN", "RemoveRegistryPathDependencyEFLC", 1) != 0;
+	bool bSkipIntro = iniReader.ReadInteger("MAIN", "SkipIntro", 0) != 0;
+	bool bDoNotPauseOnMinimize = iniReader.ReadInteger("MAIN", "DoNotPauseOnMinimize", 0) != 0;
 
 	// Unprotect image - make .text and .rdata section writeable
 	// get load address of the exe
@@ -79,6 +82,15 @@ DWORD WINAPI Init(LPVOID)
 		}
 	}
 
+	static bool isEFLC = false;
+	pattern = hook::pattern("68 ? ? ? ? E8 ? ? ? ? 8B F0 83 C4 ? 85 F6 0F 84 ? ? ? ? 6A 04");
+	if (pattern.size() > 0)
+	{
+		if (strstr(*(char**)pattern.get(0).get<char*>(1), "EFLC") != NULL)
+		{
+			isEFLC = true;
+		}
+	}
 	// process patches
 	pattern = hook::pattern("68 88 13 00 00 FF 15");
 	if (pattern.size() > 0)
@@ -158,6 +170,66 @@ DWORD WINAPI Init(LPVOID)
 	{
 		injector::WriteMemory(pattern.get(3).get<uintptr_t>(0), 0x90C301B0, true); // 0xBAC180  mov al, 1; retn
 		injector::WriteMemory(pattern.get(4).get<uintptr_t>(0), 0x90C301B0, true); // 0xBAC1C0  mov al, 1; retn
+	}
+
+	if (isEFLC && bRemoveRegistryPathDependencyEFLC)
+	{
+		struct RegPatch
+		{
+			void operator()(injector::reg_pack& regs)
+			{
+				HMODULE hModule = GetModuleHandle(NULL);
+				if (hModule != NULL)
+				{
+					GetModuleFileName(hModule, (char*)regs.esi, 260);
+					auto ptr = strrchr((char*)regs.esi, '\\');
+					*(ptr + 1) = '\0';
+				}
+			}
+		};
+
+		struct RegPatch2
+		{
+			void operator()(injector::reg_pack& regs)
+			{
+				regs.ecx = *(uintptr_t*)(regs.esp + 0x4);
+				HMODULE hModule = GetModuleHandle(NULL);
+				if (hModule != NULL)
+				{
+					GetModuleFileName(hModule, (char*)regs.esi, 260);
+					auto ptr = strrchr((char*)regs.esi, '\\');
+					*(ptr + 1) = '\0';
+				}
+			}
+		};
+
+		//eflc registry dependency
+		pattern = hook::pattern("74 ? 8D ? ? ? ? 68 19 00 02 00 6A 00 68 ? ? ? ? 68 01 00 00 80 FF D6 85 C0"); //0x7FE12C
+		if (pattern.size() > 0)
+			injector::WriteMemory<uint8_t>(pattern.get(0).get<uintptr_t>(0), 0xEB, true);
+
+		if (pattern.size() > 3)
+			injector::WriteMemory<uint8_t>(pattern.get(2).get<uintptr_t>(0), 0xEB, true); //0x8B329C
+
+		pattern = hook::pattern("0F 85 ? ? ? ? 53 88 86 03 01"); //0x7FE1B8
+		if (pattern.size() > 0)
+			injector::MakeInline<RegPatch>(pattern.get(0).get<uintptr_t>(0), pattern.get(0).get<uintptr_t>(6));
+
+		pattern = hook::pattern("75 ? 8B 4C 24 04 51 88 86 03 01 00 00"); //0x8B3315
+		if (pattern.size() > 0)
+			injector::MakeInline<RegPatch2>(pattern.get(0).get<uintptr_t>(0), pattern.get(0).get<uintptr_t>(6));
+	}
+
+	if (bSkipIntro)
+	{
+		pattern = hook::pattern("74 ? 80 3D ? ? ? ? 00 74 ? E8 ? ? ? ? 0F"); //0x473439
+		injector::WriteMemory<uint8_t>(pattern.get(0).get<uintptr_t>(0), 0xEB, true);
+	}
+
+	if (bDoNotPauseOnMinimize)
+	{
+		pattern = hook::pattern("75 ? 8B 0D ? ? ? ? 51 FF 15 ? ? ? ? 85 C0 75 ? 8B 15"); //0x402D5A
+		injector::MakeNOP(pattern.get(0).get<uintptr_t>(0), 2, true);
 	}
 
 	return 0;

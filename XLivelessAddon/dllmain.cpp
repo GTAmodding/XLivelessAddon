@@ -59,6 +59,25 @@ DWORD WINAPI Init(LPVOID)
 	CIniReader iniReader("");
 	szCustomSavePath = iniReader.ReadString("MAIN", "CustomSavePath", "");
 
+	// Unprotect image - make .text and .rdata section writeable
+	// get load address of the exe
+	DWORD dwLoadOffset = (DWORD)GetModuleHandle(NULL);
+	BYTE * pImageBase = reinterpret_cast<BYTE *>(dwLoadOffset);
+	PIMAGE_DOS_HEADER   pDosHeader = reinterpret_cast<PIMAGE_DOS_HEADER> (dwLoadOffset);
+	PIMAGE_NT_HEADERS   pNtHeader = reinterpret_cast<PIMAGE_NT_HEADERS> (pImageBase + pDosHeader->e_lfanew);
+	PIMAGE_SECTION_HEADER pSection = IMAGE_FIRST_SECTION(pNtHeader);
+
+	for (int iSection = 0; iSection < pNtHeader->FileHeader.NumberOfSections; ++iSection, ++pSection) {
+		char * pszSectionName = reinterpret_cast<char *>(pSection->Name);
+		if (!strcmp(pszSectionName, ".text") || !strcmp(pszSectionName, ".rdata")) {
+			DWORD dwPhysSize = (pSection->Misc.VirtualSize + 4095) & ~4095;
+			DWORD	oldProtect;
+			DWORD   newProtect = (pSection->Characteristics & IMAGE_SCN_MEM_EXECUTE) ? PAGE_EXECUTE_READWRITE : PAGE_READWRITE;
+			if (!VirtualProtect(reinterpret_cast <VOID *>(dwLoadOffset + pSection->VirtualAddress), dwPhysSize, newProtect, &oldProtect)) {
+				ExitProcess(0);
+			}
+		}
+	}
 
 	// process patches
 	pattern = hook::pattern("68 88 13 00 00 FF 15");

@@ -5,426 +5,293 @@
  * regarding licensing.
  */
 
- // client-side shared include file
-#if defined(_MSC_VER)
-#pragma warning(disable: 4251) // needs to have dll-interface to be used by clients
-#pragma warning(disable: 4273) // inconsistent dll linkage
-#pragma warning(disable: 4275) // non dll-interface class used as base
-#pragma warning(disable: 4244) // possible loss of data
-#pragma warning(disable: 4800) // forcing value to bool
-#pragma warning(disable: 4290) // C++ exception specification ignored
+#include "Hooking.Patterns.h"
 
- // MSVC odd defines
-#define _CRT_SECURE_NO_WARNINGS
-#define _CRT_SECURE_NO_DEPRECATE
-#endif
-
-#if defined(_WIN32)
- // platform primary include
 #define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
 #include <windows.h>
-
-#include <versionhelpers.h>
-
-#ifdef GTA_NY
-#include <d3d9.h>
-#endif
-
-#define DLL_IMPORT __declspec(dllimport)
-#define DLL_EXPORT __declspec(dllexport)
-
-#define __thread __declspec(thread)
-#elif defined(__GNUC__)
-#define DLL_IMPORT 
-#define DLL_EXPORT __attribute__((visibility("default")))
-
-#define FORCEINLINE __attribute__((always_inline))
-
-#include <unistd.h>
-
- // compatibility
-#define _stricmp strcasecmp
-#define _strnicmp strncasecmp
-
-#define _countof(x) ((sizeof(x)/sizeof(0[x])) / ((size_t)(!(sizeof(x) % sizeof(0[x])))))
-#endif
-
-#undef NDEBUG
-
- // C/C++ headers
-#include <stdio.h>
-#include <string.h>
-#include <stdlib.h>
-#include <stdint.h>
-
-#ifdef NDEBUG
-#undef NDEBUG
-#include <assert.h>
-#define NDEBUG
-#else
-#include <assert.h>
-#endif
-
-#include <map>
-#include <unordered_map>
-#include <vector>
-#include <string>
-#include <list>
-#include <atomic>
-#include <locale>
-#include <codecvt>
-#include <thread>
 #include <algorithm>
 
- // our common includes
-#define COMPONENT_EXPORT
-
- // string types per-platform
-#if defined(_WIN32)
-class fwPlatformString : public std::wstring
-{
-private:
-	inline std::wstring ConvertString(const char* narrowString)
-	{
-		std::wstring_convert<std::codecvt_utf8<wchar_t>, wchar_t> converter;
-		return converter.from_bytes(narrowString);
-	}
-
-public:
-	fwPlatformString()
-		: std::wstring()
-	{
-	}
-
-	fwPlatformString(const std::wstring& arg)
-		: std::wstring(arg)
-	{
-	}
-
-	fwPlatformString(const wchar_t* arg)
-		: std::wstring(arg)
-	{
-	}
-
-	inline fwPlatformString(const char* narrowString)
-		: std::wstring(ConvertString(narrowString))
-	{
-
-	}
-};
-typedef wchar_t pchar_t;
-
-#define _pfopen _wfopen
-#define _P(x) L##x
-#else
-class fwPlatformString : public std::string
-{
-private:
-	inline std::string ConvertString(const wchar_t* wideString)
-	{
-		std::wstring_convert<std::codecvt_utf8<wchar_t>, wchar_t> converter;
-		return converter.to_bytes(wideString);
-	}
-
-public:
-	fwPlatformString()
-		: std::string()
-	{
-	}
-
-	fwPlatformString(const std::string& arg)
-		: std::string(arg)
-	{
-	}
-
-	fwPlatformString(const char* arg)
-		: std::string(arg)
-	{
-	}
-
-	inline fwPlatformString(const wchar_t* wideString)
-		: std::string(ConvertString(wideString))
-	{
-
-	}
-};
-
-typedef char pchar_t;
-
-#define _pfopen fopen
-#define _P(x) x
+#if PATTERNS_USE_HINTS
+#include <map>
 #endif
 
-#include "Hooking.Patterns.h"
-#include <cstdint>
-#include <sstream>
 
-#include <immintrin.h>
+#if PATTERNS_USE_HINTS
 
-// from boost someplace
+ // from boost someplace
 template <std::uint64_t FnvPrime, std::uint64_t OffsetBasis>
 struct basic_fnv_1
 {
-	std::uint64_t operator()(std::string const& text) const
-	{
-		std::uint64_t hash = OffsetBasis;
-		for (std::string::const_iterator it = text.begin(), end = text.end();
-			 it != end; ++it)
-		{
-			hash *= FnvPrime;
-			hash ^= *it;
-		}
+    std::uint64_t operator()(std::string_view text) const
+    {
+        std::uint64_t hash = OffsetBasis;
+        for (auto it : text)
+        {
+            hash *= FnvPrime;
+            hash ^= it;
+        }
 
-		return hash;
-	}
+        return hash;
+    }
 };
 
-const std::uint64_t fnv_prime = 1099511628211u;
-const std::uint64_t fnv_offset_basis = 14695981039346656037u;
+static constexpr std::uint64_t fnv_prime = 1099511628211u;
+static constexpr std::uint64_t fnv_offset_basis = 14695981039346656037u;
 
 typedef basic_fnv_1<fnv_prime, fnv_offset_basis> fnv_1;
 
+#endif
+
 namespace hook
 {
-static std::multimap<uint64_t, uintptr_t> g_hints;
+    ptrdiff_t baseAddressDifference;
 
-static void TransformPattern(const std::string& pattern, std::string& data, std::string& mask)
-{
-	std::stringstream dataStr;
-	std::stringstream maskStr;
+    // sets the base to the process main base
+    void set_base()
+    {
+        set_base((uintptr_t)GetModuleHandle(nullptr));
+    }
 
-	uint8_t tempDigit = 0;
-	bool tempFlag = false;
 
-	for (auto& ch : pattern)
-	{
-		if (ch == ' ')
-		{
-			continue;
-		}
-		else if (ch == '?')
-		{
-			dataStr << '\x00';
-			maskStr << '?';
-		}
-		else if ((ch >= '0' && ch <= '9') || (ch >= 'A' && ch <= 'F') || (ch >= 'a' && ch <= 'f'))
-		{
-			char str[] = { ch, 0 };
-			int thisDigit = strtol(str, nullptr, 16);
-
-			if (!tempFlag)
-			{
-				tempDigit = (thisDigit << 4);
-				tempFlag = true;
-			}
-			else
-			{
-				tempDigit |= thisDigit;
-				tempFlag = false;
-
-				dataStr << tempDigit;
-				maskStr << 'x';
-			}
-		}
-	}
-
-	data = dataStr.str();
-	mask = maskStr.str();
-}
-
-class executable_meta
-{
-private:
-	uintptr_t m_begin;
-	uintptr_t m_end;
-
-public:
-	template<typename TReturn, typename TOffset>
-	TReturn* getRVA(TOffset rva)
-	{
-		return (TReturn*)(m_begin + rva);
-	}
-
-	executable_meta(void* module)
-		: m_begin((uintptr_t)module), m_end(0)
-	{
-		PIMAGE_DOS_HEADER dosHeader = getRVA<IMAGE_DOS_HEADER>(0);
-		PIMAGE_NT_HEADERS ntHeader = getRVA<IMAGE_NT_HEADERS>(dosHeader->e_lfanew);
-
-		m_end = m_begin + ntHeader->OptionalHeader.SizeOfCode;
-	}
-
-	inline uintptr_t begin() { return m_begin; }
-	inline uintptr_t end()   { return m_end; }
-	inline void set_begin(uintptr_t bgn) {  m_begin = bgn; }
-	inline void set_end(uintptr_t end) {  m_end = end; }
-};
-
-void pattern::Initialize(const char* pattern, size_t length)
-{
-	// get the hash for the base pattern
-	std::string baseString(pattern, length);
-	m_hash = fnv_1()(baseString);
-
-	m_matched = false;
-
-	// transform the base pattern from IDA format to canonical format
-	TransformPattern(baseString, m_bytes, m_mask);
-
-	m_size = m_mask.size();
-
-	// if there's hints, try those first
-	auto range = g_hints.equal_range(m_hash);
-
-	if (range.first != range.second)
-	{
-		std::for_each(range.first, range.second, [&] (const std::pair<uint64_t, uintptr_t>& hint)
-		{
-			ConsiderMatch(hint.second);
-		});
-
-		// if the hints succeeded, we don't need to do anything more
-		if (m_matches.size() > 0)
-		{
-			m_matched = true;
-			return;
-		}
-	}
-}
-
-void pattern::EnsureMatches(int maxCount)
-{
-	if (m_matched)
-	{
-		return;
-	}
-
-	// scan the executable for code
-	executable_meta executable(m_module);
-
-	if (range_start || range_end)
-	{
-		executable.set_begin(range_start);
-		executable.set_end(range_end);
-	}
-
-	// check if SSE 4.2 is supported
-	int cpuid[4];
-	__cpuid(cpuid, 0);
-
-	bool sse42 = false;
-
-	if (m_mask.size() <= 16)
-	{
-		if (cpuid[0] >= 1)
-		{
-			__cpuidex(cpuid, 1, 0);
-
-			sse42 = (cpuid[2] & (1 << 20));
-		}
-	}
-
-	auto matchSuccess = [&] (uintptr_t address)
-	{
-#if 0
-		Citizen_PatternSaveHint(m_hash, address);
+#if PATTERNS_USE_HINTS
+    static auto& getHints()
+    {
+        static std::multimap<uint64_t, uintptr_t> hints;
+        return hints;
+    }
 #endif
-		g_hints.insert(std::make_pair(m_hash, address));
 
-		return (m_matches.size() == maxCount);
-	};
+    static void TransformPattern(std::string_view pattern, std::basic_string<uint8_t>& data, std::basic_string<uint8_t>& mask)
+    {
+        uint8_t tempDigit = 0;
+        bool tempFlag = false;
 
-	LARGE_INTEGER ticks;
-	QueryPerformanceCounter(&ticks);
+        auto tol = [](char ch) -> uint8_t
+        {
+            if (ch >= 'A' && ch <= 'F') return uint8_t(ch - 'A' + 10);
+            if (ch >= 'a' && ch <= 'f') return uint8_t(ch - 'a' + 10);
+            return uint8_t(ch - '0');
+        };
 
-	uint64_t startTicksOld = ticks.QuadPart;
+        for (auto ch : pattern)
+        {
+            if (ch == ' ')
+            {
+                continue;
+            }
+            else if (ch == '?')
+            {
+                data.push_back(0);
+                mask.push_back(0);
+            }
+            else if ((ch >= '0' && ch <= '9') || (ch >= 'A' && ch <= 'F') || (ch >= 'a' && ch <= 'f'))
+            {
+                uint8_t thisDigit = tol(ch);
 
-	if (!sse42)
-	{
-		for (uintptr_t i = executable.begin(); i <= executable.end(); i++)
-		{
-			if (ConsiderMatch(i))
-			{
-				if (matchSuccess(i))
-				{
-					break;
-				}
-			}
-		}
-	}
-	else
-	{
-		__declspec(align(16)) char desiredMask[16] = { 0 };
+                if (!tempFlag)
+                {
+                    tempDigit = thisDigit << 4;
+                    tempFlag = true;
+                }
+                else
+                {
+                    tempDigit |= thisDigit;
+                    tempFlag = false;
 
-		for (unsigned int i = 0; i < m_mask.size(); i++)
-		{
-			desiredMask[i / 8] |= ((m_mask[i] == '?') ? 0 : 1) << (i % 8);
-		}
+                    data.push_back(tempDigit);
+                    mask.push_back(0xFF);
+                }
+            }
+        }
+    }
 
-		__m128i mask = _mm_load_si128(reinterpret_cast<const __m128i*>(desiredMask));
-		__m128i comparand = _mm_loadu_si128(reinterpret_cast<const __m128i*>(m_bytes.c_str()));
+    class executable_meta
+    {
+    private:
+        uintptr_t m_begin;
+        uintptr_t m_end;
 
-		for (uintptr_t i = executable.begin(); i <= executable.end(); i++)
-		{
-			__m128i value = _mm_loadu_si128(reinterpret_cast<const __m128i*>(i));
-			__m128i result = _mm_cmpestrm(value, 16, comparand, m_bytes.size(), _SIDD_CMP_EQUAL_EACH);
+    public:
+        template<typename TReturn, typename TOffset>
+        TReturn* getRVA(TOffset rva)
+        {
+            return (TReturn*)(m_begin + rva);
+        }
 
-			// as the result can match more bits than the mask contains
-			__m128i matches = _mm_and_si128(mask, result);
-			__m128i equivalence = _mm_xor_si128(mask, matches);
+        explicit executable_meta(uintptr_t module)
+            : m_begin(module), m_end(0)
+        {
+            static auto getSection = [](const PIMAGE_NT_HEADERS nt_headers, unsigned section) -> PIMAGE_SECTION_HEADER
+            {
+                return reinterpret_cast<PIMAGE_SECTION_HEADER>(
+                    (UCHAR*)nt_headers->OptionalHeader.DataDirectory +
+                    nt_headers->OptionalHeader.NumberOfRvaAndSizes * sizeof(IMAGE_DATA_DIRECTORY) +
+                    section * sizeof(IMAGE_SECTION_HEADER));
+            };
 
-			if (_mm_test_all_zeros(equivalence, equivalence))
-			{
-				m_matches.push_back(pattern_match((void*)i));
+            PIMAGE_DOS_HEADER dosHeader = getRVA<IMAGE_DOS_HEADER>(0);
+            PIMAGE_NT_HEADERS ntHeader = getRVA<IMAGE_NT_HEADERS>(dosHeader->e_lfanew);
 
-				if (matchSuccess(i))
-				{
-					break;
-				}
-			}
-		}
-	}
+            for (int i = 0; i < ntHeader->FileHeader.NumberOfSections; i++)
+            {
+                auto sec = getSection(ntHeader, i);
+                auto secSize = sec->SizeOfRawData != 0 ? sec->SizeOfRawData : sec->Misc.VirtualSize;
+                if (sec->Characteristics & IMAGE_SCN_MEM_EXECUTE)
+                    m_end = m_begin + sec->VirtualAddress + secSize;
 
-	m_matched = true;
-}
+                if ((i == ntHeader->FileHeader.NumberOfSections - 1) && m_end == 0)
+                    m_end = m_begin + sec->PointerToRawData + secSize;
+            }
+        }
 
-bool pattern::ConsiderMatch(uintptr_t offset)
-{
-	const char* pattern = m_bytes.c_str();
-	const char* mask = m_mask.c_str();
+        executable_meta(uintptr_t begin, uintptr_t end)
+            : m_begin(begin), m_end(end)
+        {
+        }
 
-	char* ptr = reinterpret_cast<char*>(offset);
+        inline uintptr_t begin() const { return m_begin; }
+        inline uintptr_t end() const { return m_end; }
+    };
 
-	for (size_t i = 0; i < m_size; i++)
-	{
-		if (mask[i] == '?')
-		{
-			continue;
-		}
+    void pattern::Initialize(std::string_view pattern)
+    {
+        // get the hash for the base pattern
+#if PATTERNS_USE_HINTS
+        m_hash = fnv_1()(pattern);
+#endif
 
-		if (pattern[i] != ptr[i])
-		{
-			return false;
-		}
-	}
+        // transform the base pattern from IDA format to canonical format
+        TransformPattern(pattern, m_bytes, m_mask);
 
-	m_matches.push_back(pattern_match(ptr));
+#if PATTERNS_USE_HINTS
+        // if there's hints, try those first
+#if PATTERNS_CAN_SERIALIZE_HINTS
+        if (m_rangeStart == reinterpret_cast<uintptr_t>(GetModuleHandle(nullptr)))
+#endif
+        {
+            auto range = getHints().equal_range(m_hash);
 
-	return true;
-}
+            if (range.first != range.second)
+            {
+                std::for_each(range.first, range.second, [&](const auto& hint)
+                {
+                    ConsiderHint(hint.second);
+                });
 
-void pattern::hint(uint64_t hash, uintptr_t address)
-{
-	auto range = g_hints.equal_range(hash);
+                // if the hints succeeded, we don't need to do anything more
+                if (!m_matches.empty())
+                {
+                    m_matched = true;
+                    return;
+                }
+            }
+        }
+#endif
+    }
 
-	for (auto it = range.first; it != range.second; it++)
-	{
-		if (it->second == address)
-		{
-			return;
-		}
-	}
+    void pattern::EnsureMatches(uint32_t maxCount)
+    {
+        if (m_matched || (!m_rangeStart && !m_rangeEnd))
+            return;
 
-	g_hints.insert(std::make_pair(hash, address));
-}
+        // scan the executable for code
+        executable_meta executable = m_rangeStart != 0 && m_rangeEnd != 0 ? executable_meta(m_rangeStart, m_rangeEnd) : executable_meta(m_rangeStart);
+
+        auto matchSuccess = [&](uintptr_t address)
+        {
+#if PATTERNS_USE_HINTS
+            getHints().emplace(m_hash, address);
+#else
+            (void)address;
+#endif
+
+            return (m_matches.size() == maxCount);
+        };
+
+        const uint8_t* pattern = m_bytes.data();
+        const uint8_t* mask = m_mask.data();
+        const size_t maskSize = m_mask.size();
+        const size_t lastWild = m_mask.find_last_not_of(uint8_t(0xFF));
+
+        ptrdiff_t Last[256];
+
+        std::fill(std::begin(Last), std::end(Last), lastWild == std::string::npos ? -1 : static_cast<ptrdiff_t>(lastWild));
+
+        for (ptrdiff_t i = 0; i < static_cast<ptrdiff_t>(maskSize); ++i)
+        {
+            if (Last[pattern[i]] < i)
+            {
+                Last[pattern[i]] = i;
+            }
+        }
+
+        __try
+        {
+            for (uintptr_t i = executable.begin(), end = executable.end() - maskSize; i <= end;)
+            {
+                uint8_t* ptr = reinterpret_cast<uint8_t*>(i);
+                ptrdiff_t j = maskSize - 1;
+
+                while ((j >= 0) && pattern[j] == (ptr[j] & mask[j])) j--;
+
+                if (j < 0)
+                {
+                    m_matches.emplace_back(ptr);
+
+                    if (matchSuccess(i))
+                    {
+                        break;
+                    }
+                    i++;
+                }
+                else i += std::max(ptrdiff_t(1), j - Last[ptr[j]]);
+            }
+        }
+        __except ((GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION) ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH)
+        { }
+
+        m_matched = true;
+    }
+
+    bool pattern::ConsiderHint(uintptr_t offset)
+    {
+        uint8_t* ptr = reinterpret_cast<uint8_t*>(offset);
+
+#if PATTERNS_CAN_SERIALIZE_HINTS
+        const uint8_t* pattern = m_bytes.data();
+        const uint8_t* mask = m_mask.data();
+
+        for (size_t i = 0, j = m_mask.size(); i < j; i++)
+        {
+            if (pattern[i] != (ptr[i] & mask[i]))
+            {
+                return false;
+            }
+        }
+#endif
+
+        m_matches.emplace_back(ptr);
+
+        return true;
+    }
+
+#if PATTERNS_USE_HINTS && PATTERNS_CAN_SERIALIZE_HINTS
+    void pattern::hint(uint64_t hash, uintptr_t address)
+    {
+        auto& hints = getHints();
+
+        auto range = hints.equal_range(hash);
+
+        for (auto it = range.first; it != range.second; ++it)
+        {
+            if (it->second == address)
+            {
+                return;
+            }
+        }
+
+        hints.emplace(hash, address);
+    }
+#endif
 }

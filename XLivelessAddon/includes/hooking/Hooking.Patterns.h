@@ -6,200 +6,233 @@
  */
 
 #pragma once
+
+#include <cassert>
 #include <vector>
-#include "assert.h"
+#include <string_view>
 
-static ptrdiff_t baseAddressDifference;
-
-// sets the base address difference based on an obtained pointer
-inline void set_base(uintptr_t address)
-{
-#ifdef _M_IX86
-	uintptr_t addressDiff = (address - 0x400000);
-#elif defined(_M_AMD64)
-	uintptr_t addressDiff = (address - 0x140000000);
-#endif
-
-	// pointer-style cast to ensure unsigned overflow ends up copied directly into a signed value
-	baseAddressDifference = *(ptrdiff_t*)&addressDiff;
-}
-
-// sets the base to the process main base
-inline void set_base()
-{
-	set_base((uintptr_t)GetModuleHandle(NULL));
-}
-
-template<typename T>
-inline T* getRVA(uintptr_t rva)
-{
-	set_base();
-#ifdef _M_IX86
-	return (T*)(baseAddressDifference + 0x400000 + rva);
-#elif defined(_M_AMD64)
-	return (T*)(0x140000000 + rva);
-#endif
-}
+#pragma warning(push)
+#pragma warning(disable:4201)
 
 namespace hook
 {
-	class pattern_match
-	{
-	private:
-		void* m_pointer;
+    extern ptrdiff_t baseAddressDifference;
 
-	public:
-		inline pattern_match(void* pointer)
-		{
-			m_pointer = pointer;
-		}
+    // sets the base address difference based on an obtained pointer
+    inline void set_base(uintptr_t address)
+    {
+#ifdef _M_IX86
+        uintptr_t addressDiff = (address - 0x400000);
+#elif defined(_M_AMD64)
+        uintptr_t addressDiff = (address - 0x140000000);
+#endif
 
-		template<typename T>
-		T* get(int offset)
-		{
-			char* ptr = reinterpret_cast<char*>(m_pointer);
-			return reinterpret_cast<T*>(ptr + offset);
-		}
+        // pointer-style cast to ensure unsigned overflow ends up copied directly into a signed value
+        baseAddressDifference = *(ptrdiff_t*)&addressDiff;
+    }
 
-		template<typename T>
-		T* get()
-		{
-			return get<T>(0);
-		}
-	};
+    // sets the base to the process main base
+    void set_base();
 
-	class pattern
-	{
-	private:
-		std::string m_bytes;
-		std::string m_mask;
+    inline uintptr_t getRVA(uintptr_t rva)
+    {
+        set_base();
+#ifdef _M_IX86
+        return static_cast<uintptr_t>(baseAddressDifference + 0x400000 + rva);
+#elif defined(_M_AMD64)
+        return static_cast<uintptr_t>(baseAddressDifference + 0x140000000 + rva);
+#endif
+    }
 
-		uint64_t m_hash;
+    class pattern_match
+    {
+    private:
+        void* m_pointer;
 
-		size_t m_size;
+    public:
+        inline pattern_match(void* pointer)
+            : m_pointer(pointer)
+        {
+        }
 
-		std::vector<pattern_match> m_matches;
+        template<typename T>
+        T* get(ptrdiff_t offset = 0) const
+        {
+            char* ptr = reinterpret_cast<char*>(m_pointer);
+            return reinterpret_cast<T*>(ptr + offset);
+        }
+    };
 
-		bool m_matched;
+    class pattern
+    {
+    private:
+        std::basic_string<uint8_t> m_bytes;
+        std::basic_string<uint8_t> m_mask;
 
-	protected:
-		void* m_module;
-		uintptr_t range_start = 0;
-		uintptr_t range_end = 0;
+#if PATTERNS_USE_HINTS
+        uint64_t m_hash;
+#endif
 
-	protected:
-		inline pattern(void* module)
-			: m_module(module)
-		{
-		}
+        std::vector<pattern_match> m_matches;
 
-		void Initialize(const char* pattern, size_t length);
+        bool m_matched = false;
 
-	private:
-		bool ConsiderMatch(uintptr_t offset);
+        uintptr_t m_rangeStart;
+        uintptr_t m_rangeEnd;
 
-		void EnsureMatches(int maxCount);
+    private:
+        void Initialize(std::string_view pattern);
 
-	public:
-		pattern() { };
+        bool ConsiderHint(uintptr_t offset);
 
-		template<size_t Len>
-		pattern(const char (&pattern)[Len])
-		{
-			m_module = getRVA<void>(0);
+        void EnsureMatches(uint32_t maxCount);
 
-			Initialize(pattern, Len);
-		}
+        inline pattern_match _get_internal(size_t index) const
+        {
+            return m_matches[index];
+        }
 
-		inline pattern& count(int expected)
-		{
-			if (!m_matched)
-			{
-				EnsureMatches(expected);
-			}
+        inline pattern(uintptr_t module)
+            : pattern(module, 0)
+        {
+        }
 
-			assert(m_matches.size() == expected);
+        inline pattern(uintptr_t begin, uintptr_t end)
+            : m_rangeStart(begin), m_rangeEnd(end)
+        {
+        }
 
-			return *this;
-		}
+    public:
+        pattern()
+        {
+        }
 
-		inline size_t size()
-		{
-			if (!m_matched)
-			{
-				EnsureMatches(INT_MAX);
-			}
+        pattern(std::string_view pattern)
+            : pattern(getRVA(0))
+        {
+            Initialize(std::move(pattern));
+        }
 
-			return m_matches.size();
-		}
+        inline pattern(void* module, std::string_view pattern)
+            : pattern(reinterpret_cast<uintptr_t>(module))
+        {
+            Initialize(std::move(pattern));
+        }
 
-		inline pattern_match& get(int index)
-		{
-			if (!m_matched)
-			{
-				EnsureMatches(INT_MAX);
-			}
+        inline pattern(uintptr_t begin, uintptr_t end, std::string_view pattern)
+            : m_rangeStart(begin), m_rangeEnd(end)
+        {
+            Initialize(std::move(pattern));
+        }
 
-			return m_matches[index];
-		}
+        inline pattern&& count(uint32_t expected)
+        {
+            EnsureMatches(expected);
+            assert(m_matches.size() == expected);
+            return std::forward<pattern>(*this);
+        }
 
-		inline pattern_match& get_one()
-		{
-			return count(1).get(0);
-		}
+        inline pattern&& count_hint(uint32_t expected)
+        {
+            EnsureMatches(expected);
+            return std::forward<pattern>(*this);
+        }
 
-		template<typename T = void>
-		inline auto get_first()
-		{
-			return get_one().get<T>();
-		}
+        inline pattern&& clear(void* module = nullptr)
+        {
+            if (module)
+            {
+                this->m_rangeStart = reinterpret_cast<uintptr_t>(module);
+                this->m_rangeEnd = 0;
+            }
 
-		template<typename T = void>
-		inline auto get_first(int offset)
-		{
-			return get_one().get<T>(offset);
-		}
+            m_matches.clear();
+            m_matched = false;
+            return std::forward<pattern>(*this);
+        }
 
-	public:
-		// define a hint
-		static void hint(uint64_t hash, uintptr_t address);
-	};
+        inline size_t size()
+        {
+            EnsureMatches(UINT32_MAX);
+            return m_matches.size();
+        }
 
-	class module_pattern
-		: public pattern
-	{
-	public:
-		template<size_t Len>
-		module_pattern(void* module, const char(&pattern)[Len])
-			: pattern(module)
-		{
-			Initialize(pattern, Len);
-		}
-	};
+        inline bool empty()
+        {
+            return size() == 0;
+        }
 
-	class range_pattern
-		: public pattern
-	{
-	public:
-		template<size_t Len>
-		range_pattern(uintptr_t begin, uintptr_t end, const char(&pattern)[Len]) : pattern()
-		{
-			m_module = getRVA<void>(0);
-			range_start = begin;
-			range_end = end;
-			Initialize(pattern, Len);
-		}
-	};
+        inline pattern_match get(size_t index)
+        {
+            EnsureMatches(UINT32_MAX);
+            return _get_internal(index);
+        }
 
-	template<typename T = void, size_t Len>
-	auto get_pattern(const char(&pattern_string)[Len])
-	{
-		return pattern(pattern_string).get_first<T>();
-	}
+        inline pattern_match get_one()
+        {
+            return std::forward<pattern>(*this).count(1)._get_internal(0);
+        }
 
-	template<typename T = void, size_t Len>
-	auto get_pattern(const char(&pattern_string)[Len], int offset)
-	{
-		return pattern(pattern_string).get_first<T>(offset);
-	}
+        template<typename T = void>
+        inline auto get_first(ptrdiff_t offset = 0)
+        {
+            return get_one().get<T>(offset);
+        }
+
+        template <typename Pred>
+        inline Pred for_each_result(Pred&& pred)
+        {
+            EnsureMatches(UINT32_MAX);
+            for (auto it : m_matches)
+            {
+                std::forward<Pred>(pred)(it);
+            }
+            return std::forward<Pred>(pred);
+        }
+
+    public:
+#if PATTERNS_USE_HINTS && PATTERNS_CAN_SERIALIZE_HINTS
+        // define a hint
+        static void hint(uint64_t hash, uintptr_t address);
+#endif
+
+        friend class range_pattern;
+        friend class module_pattern;
+    };
+
+    class range_pattern : public pattern
+    {
+    public:
+        inline range_pattern(uintptr_t begin, uintptr_t end, std::string_view bytes) : pattern(begin, end)
+        {
+            Initialize(std::move(bytes));
+        }
+    };
+
+    class module_pattern : public pattern
+    {
+    public:
+        inline module_pattern(void* module, std::string_view bytes) : pattern(reinterpret_cast<uintptr_t>(module))
+        {
+            Initialize(std::move(bytes));
+        }
+    };
+
+    inline pattern make_module_pattern(void* module, std::string_view bytes)
+    {
+        return pattern(module, std::move(bytes));
+    }
+
+    inline pattern make_range_pattern(uintptr_t begin, uintptr_t end, std::string_view bytes)
+    {
+        return pattern(begin, end, std::move(bytes));
+    }
+
+    template<typename T = void>
+    inline auto get_pattern(std::string_view pattern_string, ptrdiff_t offset = 0)
+    {
+        return pattern(std::move(pattern_string)).get_first<T>(offset);
+    }
 }
+
+#pragma warning(pop)

@@ -12,6 +12,25 @@ bool bDelay;
 char* pszPath;
 char* szCustomSavePath;
 
+#define WM_ROM (43858)
+
+const static uint8_t staticData[] = { 0x08, 0x00, 0x00, 0x00, 0x0B, 0x00, 0x00, 0x00, 0xF1,
+                                      0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0xF0, 0x00,
+                                      0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x07, 0x00, 0x00,
+                                      0x00, 0x0C, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00,
+                                      0xF3, 0x00, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00, 0x06,
+                                      0x00, 0x00, 0x00, 0x0A, 0x00, 0x00, 0x00, 0x05, 0x00,
+                                      0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0xF2, 0x00, 0x00,
+                                      0x00 };
+
+struct dataStruct
+{
+    char a[16];
+    int action;
+    char* act100Addr;
+    char* act18Addr;
+};
+
 // change savefile path to "%USERPROFILE%\Documents\Rockstar Games\GTA IV\savegames\"
 void getSavefilePath(int __unused, char * pBuffer, char * pszSaveName)
 {
@@ -78,6 +97,76 @@ DWORD SetFilePointerHook(HANDLE hFile, LONG dtm, PLONG dtmHigh, DWORD mm)
     return SetFilePointer(hFile, dtm, dtmHigh, mm);
 }
 
+static LRESULT WINAPI WndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
+{
+    if (uMsg == WM_ROM)
+    {
+        dataStruct* str = (dataStruct*)lParam;
+
+        switch (str->action)
+        {
+        case 100:
+            *(DWORD*)(str->act100Addr) = 1;
+            break;
+        case 18:
+            memcpy(str->act18Addr, staticData, sizeof(staticData));
+            break;
+        case 51:
+            return (LRESULT)(str->act100Addr + (DWORD)str->act18Addr);
+        }
+
+        return 0;
+    }
+
+    return 1;
+}
+
+static HWND CreateROMWindow()
+{
+    WNDCLASSEXW wc;
+    memset(&wc, 0, sizeof(wc));
+    wc.cbSize = sizeof(wc);
+
+    wc.style = 3;
+    wc.lpfnWndProc = WndProc;
+    wc.lpszClassName = L"banana";
+    wc.hInstance = GetModuleHandle(NULL);
+    wc.hbrBackground = (HBRUSH)5;
+    wc.hCursor = LoadCursor(0, MAKEINTRESOURCE(0x7F00));
+
+    RegisterClassExW(&wc);
+
+    HWND hWnd = CreateWindowExW(0, L"banana", L"", 0xCC00000, 0, 0, 0, 0, 0, 0, GetModuleHandle(NULL), 0);
+
+    return hWnd;
+}
+
+void __stdcall SendMessageFakie(int, int, int, int)
+{
+
+}
+
+int __cdecl dfaInit(int, int, int)
+{
+    return 1;
+}
+
+injector::hook_back<void(__cdecl*)(int)> hbsub_7870A0;
+void __cdecl sub_7870A0(int a1)
+{
+    static bool bOnce = false;
+    if (!bOnce)
+    {
+        if (a1 == 0)
+        {
+            a1 = 6;
+            bOnce = true;
+        }
+    }
+    return hbsub_7870A0.fun(a1);
+}
+
+
 DWORD WINAPI Init(LPVOID)
 {
     auto pattern = hook::pattern("68 88 13 00 00 FF 15");
@@ -99,6 +188,7 @@ DWORD WINAPI Init(LPVOID)
     bool bRemoveRegistryPathDependencyEFLC = iniReader.ReadInteger("MAIN", "RemoveRegistryPathDependencyEFLC", 1) != 0;
     bool bSkipWebConnect = iniReader.ReadInteger("MAIN", "SkipWebConnect", 0) != 0;
     bool bSkipIntro = iniReader.ReadInteger("MAIN", "SkipIntro", 0) != 0;
+    bool bSkipMenu = iniReader.ReadInteger("MAIN", "SkipMenu", 0) != 0;
     bool bDoNotPauseOnMinimize = iniReader.ReadInteger("MAIN", "DoNotPauseOnMinimize", 0) != 0;
 
     // Unprotect image - make .text and .rdata section writeable
@@ -233,6 +323,10 @@ DWORD WINAPI Init(LPVOID)
         injector::WriteMemory<uint16_t>(pattern.get(0).get<uintptr_t>(0), 0x0DEB, true); // 0x831049
 
     // DFA
+    pattern = hook::pattern("E8 ? ? ? ? 83 C4 0C 83 F8 01 74 11 6A 00 6A 00"); //0x5AAC6D
+    if (pattern.size() > 0)
+        injector::MakeCALL(pattern.get_first(0), dfaInit, true);
+
     pattern = hook::pattern("55 8B EC 6A 00 E8");
     if (pattern.size() > 0)
         injector::MakeJMP(pattern.get(0).get<uintptr_t>(0), CreateFileHook, true); // 0xD2F994
@@ -259,6 +353,20 @@ DWORD WINAPI Init(LPVOID)
         injector::MakeJMP(pattern.get(1).get<uintptr_t>(0), hook::pattern("6A 00 68 80 00 00 00 6A 03 6A 00 6A 01 68 00 00 00 80 57").get(0).get<uintptr_t>(0), true); // 0x5AB11B to 0x5AB23B
     }
 
+    // windows message id
+    pattern = hook::pattern("A1 ? ? ? ? 8B 0D ? ? ? ? 68 ? ? ? ? 53 50 51 FF 15"); //0x1724240
+    injector::WriteMemory(*pattern.get_first<uint32_t>(1), WM_ROM, true);
+    injector::WriteMemory(*pattern.get_first<uint32_t>(7), CreateROMWindow(), true); // window handle
+
+    // SendMessage call to this window that ends up freezing the audio update thread and resulting in a deadlock
+    pattern = hook::pattern("FF 15 ? ? ? ? E8 ? ? ? ? E8 ? ? ? ? E8 ? ? ? ? E8 ? ? ? ? B9 ? ? ? ? E8 ? ? ? ? B9 ? ? ? ? E8 ? ? ? ? 83 7C 24"); //0x79EF7D
+    injector::MakeNOP(pattern.get_first(0), 6, true);
+    injector::MakeCALL(pattern.get_first(0), SendMessageFakie, true);
+
+    // no idea how related this is to this file, but still putting it here: some entity-related function which sometimes ends up looping infinitely
+    // this patch has no apparent side effects; forces only one iteration to run
+    pattern = hook::pattern("0F 83 ? ? ? ? 5D 5B 5F 5E 83 C4 1C C2 08 00"); //0xA4E17A
+    injector::MakeNOP(pattern.get_first(0), 6, true);
 
     if (isEFLC && bRemoveRegistryPathDependencyEFLC)
     {
@@ -319,8 +427,28 @@ DWORD WINAPI Init(LPVOID)
 
     if (bSkipIntro)
     {
-        pattern = hook::pattern("74 ? 80 3D ? ? ? ? 00 74 ? E8 ? ? ? ? 0F"); //0x473439
-        injector::WriteMemory<uint8_t>(pattern.get(0).get<uintptr_t>(0), 0xEB, true);
+        //since iv hangs with it, I'll just zero duration of loadscreens
+        //pattern = hook::pattern("74 ? 80 3D ? ? ? ? 00 74 ? E8 ? ? ? ? 0F"); //0x473439
+        //injector::WriteMemory<uint8_t>(pattern.get(0).get<uintptr_t>(0), 0xEB, true);
+
+        pattern = hook::pattern("89 91 ? ? ? ? 8D 44 24 68");
+        static auto ptr = *pattern.get_first<uint32_t*>(2);
+        struct Loadsc
+        {
+            void operator()(injector::reg_pack& regs)
+            {
+                if (regs.ecx <= 400)
+                    regs.edx = 0;
+
+                ptr[regs.ecx] = regs.edx;
+            }
+        }; injector::MakeInline<Loadsc>(pattern.get_first(0), pattern.get_first(6));
+    }
+
+    if (bSkipMenu)
+    {
+        pattern = hook::pattern("6A 00 E8 ? ? ? ? 83 C4 04 5F 5E 5B 8B 8C 24 ? ? ? ? 33 CC"); //0x40C957
+        hbsub_7870A0.fun = injector::MakeCALL(pattern.get_first(2), sub_7870A0).get();
     }
 
     if (bDoNotPauseOnMinimize)

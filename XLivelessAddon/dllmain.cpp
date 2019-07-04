@@ -159,11 +159,38 @@ void __cdecl sub_7870A0(int a1)
     {
         if (a1 == 0)
         {
-            a1 = 6;
+            bool bNoLoad = (GetAsyncKeyState(VK_SHIFT) & 0xF000) != 0;
+            if (!bNoLoad)
+                a1 = 6;
+
             bOnce = true;
         }
     }
     return hbsub_7870A0.fun(a1);
+}
+
+LRESULT __stdcall DefWindowProcAProxy(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)
+{
+    static bool bOnce = false;
+    if (!bOnce)
+    {
+        SetWindowLong(hWnd, GWL_STYLE, GetWindowLong(hWnd, GWL_STYLE) & ~WS_OVERLAPPEDWINDOW);
+        bOnce = true;
+    }
+
+    return DefWindowProcA(hWnd, Msg, wParam, lParam);
+}
+
+LRESULT __stdcall DefWindowProcWProxy(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)
+{
+    static bool bOnce = false;
+    if (!bOnce)
+    {
+        SetWindowLong(hWnd, GWL_STYLE, GetWindowLong(hWnd, GWL_STYLE) & ~WS_OVERLAPPEDWINDOW);
+        bOnce = true;
+    }
+
+    return DefWindowProcW(hWnd, Msg, wParam, lParam);
 }
 
 
@@ -190,6 +217,7 @@ DWORD WINAPI Init(LPVOID)
     bool bSkipIntro = iniReader.ReadInteger("MAIN", "SkipIntro", 0) != 0;
     bool bSkipMenu = iniReader.ReadInteger("MAIN", "SkipMenu", 0) != 0;
     bool bDoNotPauseOnMinimize = iniReader.ReadInteger("MAIN", "DoNotPauseOnMinimize", 0) != 0;
+    bool bBorderlessWindowed = iniReader.ReadInteger("MAIN", "BorderlessWindowed", 0) != 0;
 
     // Unprotect image - make .text and .rdata section writeable
     // get load address of the exe
@@ -365,8 +393,9 @@ DWORD WINAPI Init(LPVOID)
 
     // no idea how related this is to this file, but still putting it here: some entity-related function which sometimes ends up looping infinitely
     // this patch has no apparent side effects; forces only one iteration to run
-    pattern = hook::pattern("0F 83 ? ? ? ? 5D 5B 5F 5E 83 C4 1C C2 08 00"); //0xA4E17A
-    injector::MakeNOP(pattern.get_first(0), 6, true);
+    // seems bugged, disabled for now
+    //pattern = hook::pattern("0F 83 ? ? ? ? 5D 5B 5F 5E 83 C4 1C C2 08 00"); //0xA4E17A
+    //injector::MakeNOP(pattern.get_first(0), 6, true);
 
     if (isEFLC && bRemoveRegistryPathDependencyEFLC)
     {
@@ -427,22 +456,27 @@ DWORD WINAPI Init(LPVOID)
 
     if (bSkipIntro)
     {
-        //since iv hangs with it, I'll just zero duration of loadscreens
-        //pattern = hook::pattern("74 ? 80 3D ? ? ? ? 00 74 ? E8 ? ? ? ? 0F"); //0x473439
-        //injector::WriteMemory<uint8_t>(pattern.get(0).get<uintptr_t>(0), 0xEB, true);
-
-        pattern = hook::pattern("89 91 ? ? ? ? 8D 44 24 68");
-        static auto ptr = *pattern.get_first<uint32_t*>(2);
-        struct Loadsc
+        if (isEFLC)
         {
-            void operator()(injector::reg_pack& regs)
+            pattern = hook::pattern("74 ? 80 3D ? ? ? ? 00 74 ? E8 ? ? ? ? 0F"); //0x473439
+            injector::WriteMemory<uint8_t>(pattern.get(0).get<uintptr_t>(0), 0xEB, true);
+        }
+        else
+        {
+            //since iv hangs with it, I'll just zero the duration of loadscreens
+            pattern = hook::pattern("89 91 ? ? ? ? 8D 44 24 68");
+            static auto ptr = *pattern.get_first<uint32_t*>(2);
+            struct Loadsc
             {
-                if (regs.ecx <= 400)
-                    regs.edx = 0;
+                void operator()(injector::reg_pack& regs)
+                {
+                    if (regs.ecx <= 400)
+                        regs.edx = 0;
 
-                ptr[regs.ecx] = regs.edx;
-            }
-        }; injector::MakeInline<Loadsc>(pattern.get_first(0), pattern.get_first(6));
+                    ptr[regs.ecx] = regs.edx;
+                }
+            }; injector::MakeInline<Loadsc>(pattern.get_first(0), pattern.get_first(6));
+        }
     }
 
     if (bSkipMenu)
@@ -455,6 +489,15 @@ DWORD WINAPI Init(LPVOID)
     {
         pattern = hook::pattern("75 ? 8B 0D ? ? ? ? 51 FF 15 ? ? ? ? 85 C0 75 ? 8B 15"); //0x402D5A
         injector::MakeNOP(pattern.get(0).get<uintptr_t>(0), 2, true);
+    }
+
+    if (bBorderlessWindowed)
+    {
+        pattern = hook::pattern("FF 15 ? ? ? ? 5F 5E 5D 5B 83 C4 10 C2 10 00");
+        injector::MakeNOP(pattern.count(2).get(0).get<void>(0), 6, true);
+        injector::MakeCALL(pattern.count(2).get(0).get<void>(0), DefWindowProcWProxy, true);
+        injector::MakeNOP(pattern.count(2).get(1).get<void>(0), 6, true);
+        injector::MakeCALL(pattern.count(2).get(1).get<void>(0), DefWindowProcAProxy, true);
     }
 
     return 0;

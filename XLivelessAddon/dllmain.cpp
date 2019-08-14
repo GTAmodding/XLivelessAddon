@@ -21,7 +21,8 @@ const static uint8_t staticData[] = { 0x08, 0x00, 0x00, 0x00, 0x0B, 0x00, 0x00, 
                                       0xF3, 0x00, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00, 0x06,
                                       0x00, 0x00, 0x00, 0x0A, 0x00, 0x00, 0x00, 0x05, 0x00,
                                       0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0xF2, 0x00, 0x00,
-                                      0x00 };
+                                      0x00
+                                    };
 
 struct dataStruct
 {
@@ -48,12 +49,14 @@ void getSavefilePath(int __unused, char * pBuffer, char * pszSaveName)
     DWORD attrs = GetFileAttributes(pBuffer);
     if (attrs == INVALID_FILE_ATTRIBUTES)
         CreateDirectory(pBuffer, NULL);
-    else if (!(attrs & FILE_ATTRIBUTE_DIRECTORY)) {
+    else if (!(attrs & FILE_ATTRIBUTE_DIRECTORY))
+    {
         strcpy_s(pBuffer, 256, pszSaveName);
         return;
     }
 
-    if (pszSaveName) {
+    if (pszSaveName)
+    {
         strcat_s(pBuffer, 256, "\\");
         strcat_s(pBuffer, 256, pszSaveName);
     }
@@ -61,25 +64,12 @@ void getSavefilePath(int __unused, char * pBuffer, char * pszSaveName)
 
 HANDLE CreateFileHook(_In_ LPCSTR lpFileName, _In_ DWORD dwDesiredAccess, _In_ DWORD dwShareMode, _In_opt_ LPSECURITY_ATTRIBUTES lpSecurityAttributes, _In_ DWORD dwCreationDisposition, _In_ DWORD dwFlagsAndAttributes, _In_opt_ HANDLE hTemplateFile)
 {
-    HANDLE hFile = CreateFileA(lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
-
-    return hFile;
+    return CreateFileA(lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
 }
 
 BOOL CloseHandleHook(_In_ HANDLE hObject)
 {
-    __try
-    {
-        BOOL retval = CloseHandle(hObject);
-
-        return retval;
-    }
-    __except (EXCEPTION_CONTINUE_EXECUTION)
-    {
-
-    }
-
-    return TRUE;
+    return CloseHandle(hObject);
 }
 
 BOOL GetFileSizeExHook(HANDLE hFile, PLARGE_INTEGER lpFileSize)
@@ -227,13 +217,16 @@ DWORD WINAPI Init(LPVOID)
     PIMAGE_NT_HEADERS   pNtHeader = reinterpret_cast<PIMAGE_NT_HEADERS> (pImageBase + pDosHeader->e_lfanew);
     PIMAGE_SECTION_HEADER pSection = IMAGE_FIRST_SECTION(pNtHeader);
 
-    for (int iSection = 0; iSection < pNtHeader->FileHeader.NumberOfSections; ++iSection, ++pSection) {
+    for (int iSection = 0; iSection < pNtHeader->FileHeader.NumberOfSections; ++iSection, ++pSection)
+    {
         char * pszSectionName = reinterpret_cast<char *>(pSection->Name);
-        if (!strcmp(pszSectionName, ".text") || !strcmp(pszSectionName, ".rdata")) {
+        if (!strcmp(pszSectionName, ".text") || !strcmp(pszSectionName, ".rdata"))
+        {
             DWORD dwPhysSize = (pSection->Misc.VirtualSize + 4095) & ~4095;
-            DWORD	oldProtect;
+            DWORD   oldProtect;
             DWORD   newProtect = (pSection->Characteristics & IMAGE_SCN_MEM_EXECUTE) ? PAGE_EXECUTE_READWRITE : PAGE_READWRITE;
-            if (!VirtualProtect(reinterpret_cast <VOID *>(dwLoadOffset + pSection->VirtualAddress), dwPhysSize, newProtect, &oldProtect)) {
+            if (!VirtualProtect(reinterpret_cast <VOID *>(dwLoadOffset + pSection->VirtualAddress), dwPhysSize, newProtect, &oldProtect))
+            {
                 ExitProcess(0);
             }
         }
@@ -260,13 +253,13 @@ DWORD WINAPI Init(LPVOID)
 
     pattern = hook::pattern("81 EC ? ? ? ? A1 ? ? ? ? 33 C4 89 84 24 ? ? ? ? 53 8B 9C 24 ? ? ? ? 55 8B AC ? ? ? ? ? 8B 45 00");
     if (pattern.size() > 0)
-        injector::WriteMemory(pattern.get(0).get<uintptr_t>(0), 0x900008C2, true); // 0x403F10 RETN 8 - certificates check  
+        injector::WriteMemory(pattern.get(0).get<uintptr_t>(0), 0x900008C2, true); // 0x403F10 RETN 8 - certificates check
 
     pattern = hook::pattern("8B 56 1C 3B 56 20 ? ? 6A 00 6A 00");
     if (pattern.size() > 0)
     {
         injector::WriteMemory(pattern.get(0).get<uintptr_t>(0), 0x4AE9C033, true); // 0x40262D xor eax, eax - address of the RGSC object
-        injector::WriteMemory(pattern.get(0).get<uintptr_t>(4), 0x90000002, true); // 0x402631 jmp 40287E (skip RGSC connect and EFC checks)	
+        injector::WriteMemory(pattern.get(0).get<uintptr_t>(4), 0x90000002, true); // 0x402631 jmp 40287E (skip RGSC connect and EFC checks)
     }
 
     pattern = hook::pattern("89 35 ? ? ? ? E8 ? ? ? ? 83 C4 04 84 C0");
@@ -301,7 +294,7 @@ DWORD WINAPI Init(LPVOID)
 
     //pattern = hook::pattern("8B 35 ? ? ? ? 85 F6 74 ? E8 ? ? ? ? 83 3D ? ? ? ? 00 74 ?");
     //if (pattern.size() > 0)
-    //	injector::MakeNOP(pattern.get(0).get<uintptr_t>(0), 24, true); // 0x493D4C
+    //  injector::MakeNOP(pattern.get(0).get<uintptr_t>(0), 24, true); // 0x493D4C
 
 
     // savegames
@@ -465,17 +458,15 @@ DWORD WINAPI Init(LPVOID)
         {
             //since iv hangs with it, I'll just zero the duration of loadscreens
             pattern = hook::pattern("89 91 ? ? ? ? 8D 44 24 68");
-            static auto ptr = *pattern.get_first<uint32_t*>(2);
             struct Loadsc
             {
                 void operator()(injector::reg_pack& regs)
                 {
-                    if (regs.ecx <= 400)
+                    *(int32_t*)&regs.ecx *= 400;
+                    if (regs.edx < 8000)
                         regs.edx = 0;
-
-                    ptr[regs.ecx] = regs.edx;
                 }
-            }; injector::MakeInline<Loadsc>(pattern.get_first(0), pattern.get_first(6));
+            }; injector::MakeInline<Loadsc>(pattern.get_first(-6), pattern.get_first(0));
         }
     }
 

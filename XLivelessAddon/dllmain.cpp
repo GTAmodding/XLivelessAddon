@@ -320,8 +320,8 @@ DWORD WINAPI Init(LPVOID)
     pattern = hook::pattern("33 C0 83 3D ? ? ? ? 01 0F 94 C0 C3");
     if (pattern.size() > 0)
     {
-        injector::WriteMemory(pattern.get(3).get<uintptr_t>(0), 0x90C301B0, true); // 0xBAC180  mov al, 1; retn
-        injector::WriteMemory(pattern.get(4).get<uintptr_t>(0), 0x90C301B0, true); // 0xBAC1C0  mov al, 1; retn
+        injector::WriteMemory(pattern.get(pattern.size() - 2).get<uintptr_t>(0), 0x90C301B0, true); // 0xBAC180  mov al, 1; retn
+        injector::WriteMemory(pattern.get(pattern.size() - 1).get<uintptr_t>(0), 0x90C301B0, true); // 0xBAC1C0  mov al, 1; retn
     }
 
 
@@ -390,7 +390,7 @@ DWORD WINAPI Init(LPVOID)
     //pattern = hook::pattern("0F 83 ? ? ? ? 5D 5B 5F 5E 83 C4 1C C2 08 00"); //0xA4E17A
     //injector::MakeNOP(pattern.get_first(0), 6, true);
 
-    if (isEFLC && bRemoveRegistryPathDependencyEFLC)
+    if (bRemoveRegistryPathDependencyEFLC)
     {
         struct RegPatch
         {
@@ -421,6 +421,24 @@ DWORD WINAPI Init(LPVOID)
             }
         };
 
+        struct RegPatch3
+        {
+            void operator()(injector::reg_pack& regs)
+            {
+                static char path[260];
+                regs.esi = (uint32_t)&path;
+                regs.ebp = regs.eax;
+
+                HMODULE hModule = GetModuleHandle(NULL);
+                if (hModule != NULL)
+                {
+                    GetModuleFileName(hModule, (char*)regs.esi, 260);
+                    auto ptr = strrchr((char*)regs.esi, '\\');
+                    *(ptr + 1) = '\0';
+                }
+            }
+        };
+
         //eflc registry dependency
         pattern = hook::pattern("74 ? 8D ? ? ? ? 68 19 00 02 00 6A 00 68 ? ? ? ? 68 01 00 00 80 FF D6 85 C0"); //0x7FE12C
         if (pattern.size() > 0)
@@ -436,14 +454,22 @@ DWORD WINAPI Init(LPVOID)
         pattern = hook::pattern("75 ? 8B 4C 24 04 51 88 86 03 01 00 00"); //0x8B3315
         if (pattern.size() > 0)
             injector::MakeInline<RegPatch2>(pattern.get(0).get<uintptr_t>(0), pattern.get(0).get<uintptr_t>(6));
+
+        //additional patches compatibility
+        //pattern = hook::pattern("8B 74 24 1C 8B E8 33 C0 6A 01 89 45 00 56 66 89 45 04"); //patch5
+        //if (pattern.size() > 0)
+        //    injector::MakeInline<RegPatch3>(pattern.get(0).get<uintptr_t>(0), pattern.get(0).get<uintptr_t>(6));
     }
 
     if (bSkipWebConnect)
     {
-        pattern = hook::pattern("75 07 A0"); // 0x7AF1B7 isInternetConnectionPresent
-        injector::MakeNOP(pattern.get(0).get<uintptr_t>(0), 2, true);
+        pattern = hook::pattern("51 6A 00 8D 44 24 04 50");
+        auto offset = (uintptr_t)pattern.count(2).get(1).get<uintptr_t>(0);
 
-        pattern = hook::pattern("81 EC 94 09 00 00"); // 0x87FC60 health check
+        auto rpattern = hook::pattern(offset, offset + 500, "FF 15 ? ? ? ? 85 C0 75"); // 0x7AF1B7 isInternetConnectionPresent
+        injector::MakeNOP(rpattern.get(0).get<uintptr_t>(8), 2, true);
+
+        pattern = hook::pattern("81 EC ? ? ? ? A1 ? ? ? ? 33 C4 89 84 24 ? ? ? ? 53 ? 6A 3C 33 DB 8D 44 24 ? 53 50 E8"); // 0x87FC60 health check
         injector::WriteMemory<uint8_t>(pattern.get(0).get<uintptr_t>(0), 0xC3, true);
     }
 
@@ -472,8 +498,8 @@ DWORD WINAPI Init(LPVOID)
 
     if (bSkipMenu)
     {
-        pattern = hook::pattern("6A 00 E8 ? ? ? ? 83 C4 04 5F 5E 5B 8B 8C 24 ? ? ? ? 33 CC"); //0x40C957
-        hbsub_7870A0.fun = injector::MakeCALL(pattern.get_first(2), sub_7870A0).get();
+        pattern = hook::pattern("83 F8 03 75 ? A1 ? ? ? ? 80 88 ? ? ? ? ? 84 DB 74 0A 6A 00 E8 ? ? ? ? 83 C4 04 5F 5E"); //0x40C957
+        hbsub_7870A0.fun = injector::MakeCALL(pattern.get_first(22), sub_7870A0).get();
     }
 
     if (bDoNotPauseOnMinimize)

@@ -414,6 +414,11 @@ DWORD WINAPI Init(LPVOID)
     if (pattern.size() > 0)
         injector::MakeRET(pattern.get(0).get<uintptr_t>(0), 0, true);
 
+    // RETN - skip files.txt hash check [v1000 - v1001]
+    pattern = hook::pattern("81 EC ? ? ? ? A1 ? ? ? ? 33 C4 89 84 24 ? ? ? ? 56 68 ? ? ? ? 68 ? ? ? ? 68");
+    if (pattern.size() > 0)
+        injector::MakeRET(pattern.get(0).get<uintptr_t>(0), 0, true);
+
     // JMP [v1002 - v1004]
     pattern = hook::pattern("3B 56 20 74 19");
     if (pattern.size() > 0)

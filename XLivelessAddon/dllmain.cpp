@@ -216,6 +216,7 @@ LSTATUS WINAPI CustomRegOpenKeyExA(HKEY hKey, LPCSTR lpSubKey, DWORD ulOptions, 
 {
     if (strstr(lpSubKey, "Rockstar Games") != NULL)
     {
+        Key = hKey;
         SubKey = lpSubKey;
         *phkResult = NULL;
         return ERROR_SUCCESS;
@@ -445,6 +446,11 @@ DWORD WINAPI Init(LPVOID)
     pattern = hook::pattern("83 C4 ? 3B 46 20");
     if (pattern.size() > 0)
         injector::WriteMemory<uint8_t>(pattern.get(0).get<uintptr_t>(12), 0xEB, true); //jmp
+
+    // data integrity checks VDS100 [v1006 - v1008]
+    pattern = hook::pattern("75 28 6A 00 6A 00 68 ? ? ? ? E8 ? ? ? ? 83 C4 0C");
+    if (pattern.size() > 0)
+        injector::WriteMemory<uint8_t>(pattern.get(0).get<uintptr_t>(0), 0xEB, true); //jmp
 
     // NOP - RGSC initialization check [v1000 - v1001]
     pattern = hook::pattern("74 EC 38 5E 06 74 E7 68");

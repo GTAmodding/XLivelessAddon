@@ -470,11 +470,6 @@ DWORD WINAPI Init(LPVOID)
     if (pattern.size() > 0)
         injector::MakeNOP(pattern.get(0).get<uintptr_t>(0), 2, true);
 
-    // mov dword_15B47DC, esi => mov ..., ebx - another RGSC related object [v1000 - v1001]
-    pattern = hook::pattern("83 EC 68 A1 33 C4 89 44 24 60 53 56 57 8B F1 68 8D 44 24 2C 8D 4C 24 3C 68");
-    if (pattern.size() > 0)
-        injector::WriteMemory<uint8_t>(pattern.get(0).get<uintptr_t>(0), 0x1D, true);
-
     // NOP - last RGSC init check [v1002 - v1004]
     pattern = hook::pattern("3B 56 18 0F 85");
     if (pattern.size() > 0)
@@ -531,7 +526,12 @@ DWORD WINAPI Init(LPVOID)
     // NOP; MOV [g_rgsc], eax [v1000 - v1008]
     pattern = hook::pattern("89 35 ? ? ? ? E8 ? ? ? ? 83 C4 04 84 C0");
     if (pattern.size() > 0)
-        injector::WriteMemory<uint16_t>(pattern.get(0).get<uintptr_t>(0), 0xA390, true);
+    {
+        if (gv_not({ 1000, 1010 }))
+            injector::WriteMemory<uint16_t>(pattern.get(0).get<uintptr_t>(0), 0xA390, true);
+        else
+            injector::WriteMemory<uint8_t>(pattern.get(0).get<uintptr_t>(1), 0x1D, true);
+    }
 
     //skip missing tests [v1005]
     {

@@ -407,7 +407,7 @@ DWORD WINAPI Init(LPVOID)
     // RETN - skip files.txt hash check [v1002 - v1005]
     pattern = hook::pattern("81 EC ? ? ? ? A1 ? ? ? ? 33 C4 89 84 24 ? ? ? ? 83 3D ? ? ? ? ? 56 57 0F 85 ? ? ? ? 83 3D");
     if (pattern.size() > 0)
-        injector::MakeRET(pattern.get(pattern.size() - 1).get<uintptr_t>(0), 0, true);
+        injector::MakeRET(pattern.get(0).get<uintptr_t>(0), 0, true);
 
     // RETN - skip files.txt hash check [v1000 - v1001]
     pattern = hook::pattern("81 EC ? ? ? ? A1 ? ? ? ? 33 C4 89 84 24 ? ? ? ? 83 3D ? ? ? ? ? 0F 85 ? ? ? ? 83 3D");

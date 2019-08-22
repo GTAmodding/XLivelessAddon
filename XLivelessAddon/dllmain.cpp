@@ -10,7 +10,8 @@
 
 bool bDelay;
 char* pszPath;
-char* szCustomSavePath;
+std::string szCustomSavePath;
+std::string szCustomSettingsPath;
 
 #define WM_ROM (43858)
 
@@ -35,14 +36,15 @@ struct dataStruct
 // change savefile path to "%USERPROFILE%\Documents\Rockstar Games\GTA IV\savegames\"
 void getSavefilePath(int __unused, char * pBuffer, char * pszSaveName)
 {
-    if (strlen(szCustomSavePath) == 0)
+    if (szCustomSavePath.empty())
     {
         strcpy_s(pBuffer, 256, pszPath);
         strcat_s(pBuffer, 256, "savegames");
     }
     else
     {
-        strcpy_s(pBuffer, 256, szCustomSavePath);
+        szCustomSavePath.copy(pBuffer, 256);
+        pBuffer[szCustomSavePath.length()] = '\0';
     }
 
     // check path and create directory if necessary
@@ -281,6 +283,7 @@ DWORD WINAPI Init(LPVOID)
 
     CIniReader iniReader("");
     szCustomSavePath = iniReader.ReadString("MAIN", "CustomSavePath", "");
+    szCustomSettingsPath = iniReader.ReadString("MAIN", "CustomSettingsPath", "");
     bool bRemoveRegistryPathDependency = iniReader.ReadInteger("MAIN", "RemoveRegistryPathDependency", 1) != 0;
     bool bSkipWebConnect = iniReader.ReadInteger("MAIN", "SkipWebConnect", 0) != 0;
     bool bSkipIntro = iniReader.ReadInteger("MAIN", "SkipIntro", 0) != 0;
@@ -380,6 +383,47 @@ DWORD WINAPI Init(LPVOID)
             pattern = hook::pattern("55 8B EC 83 E4 F8 83 EC 4C 56");
             if (pattern.size() > 0)
                 injector::MakeJMP(pattern.get(0).get<uintptr_t>(0), getSavefilePath, true); // replace getSavefilePath
+        }
+    }
+
+    //settings [v1001-v1008]
+    if (!szCustomSettingsPath.empty())
+    {
+        pattern = hook::pattern("68 ? ? ? ? B9 ? ? ? ? E8 ? ? ? ? 8D 4C 24 04 E8 ? ? ? ? 5B 83 C4 08 C3");
+        if (pattern.size() > 0)
+        {
+            static auto buf = *pattern.count(4).get(1).get<char*>(1);
+            static auto unk_1003C10 = *pattern.count(4).get(1).get<uint32_t>(6);
+            struct SettingsPath
+            {
+                void operator()(injector::reg_pack& regs)
+                {
+                    std::string s;
+                    if (szCustomSettingsPath.find(":") == std::string::npos)
+                    {
+                        char path[MAX_PATH];
+                        GetModuleFileName(GetModuleHandle(NULL), path, MAX_PATH);
+                        auto ptr = strrchr(path, '\\');
+                        *(ptr + 1) = '\0';
+                        s += path;
+                    }
+
+                    s += "\\" + szCustomSettingsPath + "\\" + (char*)regs.ebx + "\\";
+
+                    if (GetFileAttributes(buf) == INVALID_FILE_ATTRIBUTES)
+                        CreateDirectory(buf, NULL);
+
+                    if (GetFileAttributes(buf) & FILE_ATTRIBUTE_DIRECTORY)
+                    {
+                        s.copy(buf, 256);
+                        buf[s.length()] = '\0';
+                    }
+
+                    regs.ecx = unk_1003C10;
+                }
+            };
+            injector::MakeInline<SettingsPath>(pattern.count(4).get(1).get<void>(5));
+            injector::MakeInline<SettingsPath>(pattern.count(4).get(2).get<void>(5));
         }
     }
 

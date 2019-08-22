@@ -408,12 +408,15 @@ DWORD WINAPI Init(LPVOID)
                         s += path;
                     }
 
-                    s += "\\" + szCustomSettingsPath + "\\" + (char*)regs.ebx + "\\";
+                    if (s.back() != '\\')
+                        s += "\\";
 
-                    if (GetFileAttributes(buf) == INVALID_FILE_ATTRIBUTES)
-                        CreateDirectory(buf, NULL);
+                    s += szCustomSettingsPath + "\\" + (char*)regs.ebx + "\\";
 
-                    if (GetFileAttributes(buf) & FILE_ATTRIBUTE_DIRECTORY)
+                    if (GetFileAttributes(s.c_str()) == INVALID_FILE_ATTRIBUTES)
+                        CreateDirectory(s.c_str(), NULL);
+
+                    if (GetFileAttributes(s.c_str()) & FILE_ATTRIBUTE_DIRECTORY)
                     {
                         s.copy(buf, 256);
                         buf[s.length()] = '\0';

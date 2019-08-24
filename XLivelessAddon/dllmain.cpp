@@ -373,8 +373,8 @@ DWORD WINAPI Init(LPVOID)
         if (pattern.count(3).size() > 0)
         {
             auto range_end = (uintptr_t)pattern.get(2).get<uintptr_t>(0);
-            auto tmp = hook::pattern(range_end - 1000, range_end, "8A 88 ? ? ? ? 88 88 ? ? ? ? 83 C0 01");
-            pszPath = *tmp.get(tmp.size() - 2).get<char*>(2);
+            auto tmp = hook::pattern(range_end - 0x80, range_end, "8A 88 ? ? ? ? 88 88 ? ? ? ? 83 C0 01");
+            pszPath = *tmp.get(0).get<char*>(2);
 
             pattern = hook::pattern("75 ? 83 C1 01 83 C0 01 83 F9 04");
             if (pattern.size() > 0)

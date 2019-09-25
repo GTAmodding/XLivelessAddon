@@ -315,15 +315,15 @@ DWORD WINAPI Init(LPVOID)
         }
     }
 
-    static bool isEFLC = false;
-    pattern = hook::pattern("68 ? ? ? ? E8 ? ? ? ? 8B F0 83 C4 ? 85 F6 0F 84 ? ? ? ? 6A 04");
-    if (pattern.size() > 0)
-    {
-        if (strstr(*(char**)pattern.get(0).get<char*>(1), "EFLC") != NULL)
-        {
-            isEFLC = true;
-        }
-    }
+    //static bool isEFLC = false;
+    //pattern = hook::pattern("68 ? ? ? ? E8 ? ? ? ? 8B F0 83 C4 ? 85 F6 0F 84 ? ? ? ? 6A 04");
+    //if (pattern.size() > 0)
+    //{
+    //    if (strstr(*(char**)pattern.get(0).get<char*>(1), "EFLC") != NULL)
+    //    {
+    //        isEFLC = true;
+    //    }
+    //}
 
     auto gv = [&dwLoadOffset]() -> uint32_t
     {
@@ -763,15 +763,15 @@ DWORD WINAPI Init(LPVOID)
 
     if (bSkipIntro)
     {
-        if (isEFLC)
-        {
-            pattern = hook::pattern("74 ? 80 3D ? ? ? ? 00 74 ? E8 ? ? ? ? 0F");
-            injector::WriteMemory<uint8_t>(pattern.get(0).get<uintptr_t>(0), 0xEB, true);
-        }
-        else
+        //if (isEFLC)
+        //{
+        //    pattern = hook::pattern("74 ? 80 3D ? ? ? ? 00 74 ? E8 ? ? ? ? 0F");
+        //    injector::WriteMemory<uint8_t>(pattern.get(0).get<uintptr_t>(0), 0xEB, true);
+        //}
+        //else
         {
             // [v1000 - v1008]
-            //since iv hangs with it, I'll just zero the duration of loadscreens
+            //since iv hangs with the code above, I'll just zero the duration of loadscreens
             pattern = hook::pattern("89 91 ? ? ? ? 8D 44 24 ? 68 ? ? ? ? 50");
             struct Loadsc
             {
